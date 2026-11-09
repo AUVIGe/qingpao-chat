@@ -9,6 +9,7 @@ Group=ubuntu
 WorkingDirectory=/opt/qingpao/app
 Environment=QINGPAO_DATA=/opt/qingpao/data
 Environment=PORT=8120
+Environment=QINGPAO_TURN_PASSWORD=qingpao-relay-2026
 ExecStart=/usr/bin/python3 /opt/qingpao/app/server/app.py
 Restart=always
 RestartSec=3

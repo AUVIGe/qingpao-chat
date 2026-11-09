@@ -83,6 +83,14 @@ class App(BaseHTTPRequestHandler):
         file = PUBLIC / ("index.html" if path == "/" else path.lstrip("/"))
         if not file.is_file() or ".." in file.parts: self.send_error(404); return
         data = file.read_bytes(); typ = mimetypes.guess_type(str(file))[0] or "application/octet-stream"
+        # Add TURN relay configuration to the page at delivery time.  Credentials are
+        # only issued to an authenticated member, not embedded in the public file.
+        if path == "/":
+            relay = ("<script>(function(){var Native=window.RTCPeerConnection;if(!Native)return;"
+                     "window.RTCPeerConnection=function(c){var x=new XMLHttpRequest();x.open('GET','/api/turn',false);"
+                     "try{x.send(null);var t=JSON.parse(x.responseText);if(t.iceServers){c=c||{};c.iceServers=(c.iceServers||[]).concat(t.iceServers)}}catch(e){};"
+                     "return new Native(c)};window.RTCPeerConnection.prototype=Native.prototype})()</script>").encode()
+            data = data.replace(b"</body>", relay + b"</body>")
         self.send_response(200); self.send_header("Content-Type", typ); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"); self.send_header("Pragma", "no-cache"); self.send_header("Expires", "0"); self.end_headers(); self.wfile.write(data)
     def do_GET(self):
         path = urlparse(self.path).path
@@ -91,6 +99,7 @@ class App(BaseHTTPRequestHandler):
         if path == "/api/contacts": return self.contacts()
         if path == "/api/messages": return self.messages(parse_qs(urlparse(self.path).query))
         if path == "/api/call-signals": return self.call_signals(parse_qs(urlparse(self.path).query))
+        if path == "/api/turn": return self.turn()
         if path.startswith('/api/attachments/'): return self.attachment(path.rsplit('/',1)[-1])
         self.static(path)
     def do_POST(self):
@@ -141,6 +150,14 @@ class App(BaseHTTPRequestHandler):
         if not u:return
         db=conn(); rows=db.execute("SELECT u.id,u.username,u.seen_at FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_a=? THEN f.user_b ELSE f.user_a END WHERE f.user_a=? OR f.user_b=? ORDER BY u.username",(u["id"],u["id"],u["id"])).fetchall(); db.close(); now=int(time.time())
         self.json({"contacts":[{"id":r["id"],"username":r["username"],"online":r["seen_at"]>now-ONLINE_SECONDS} for r in rows]})
+    def turn(self):
+        if not self.require(): return
+        password = os.environ.get("QINGPAO_TURN_PASSWORD", "")
+        if not password: return self.json({"iceServers": []})
+        self.json({"iceServers":[
+            {"urls":"turn:43.135.22.183:3478?transport=udp", "username":"qingpao", "credential":password},
+            {"urls":"turn:43.135.22.183:3478?transport=tcp", "username":"qingpao", "credential":password}
+        ]})
     def messages(self, q):
         u=self.require()
         if not u:return

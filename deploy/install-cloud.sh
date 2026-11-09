@@ -10,11 +10,14 @@ sudo install -m 0644 "$release/server/app.py" /opt/qingpao/app/server/app.py
 sudo install -m 0644 "$release/server/requirements.txt" /opt/qingpao/app/server/requirements.txt
 sudo install -m 0644 "$release/public/index.html" /opt/qingpao/app/public/index.html
 sudo install -m 0644 "$release/deploy/qingpao.service" /etc/systemd/system/qingpao.service
+sudo install -m 0644 "$release/deploy/turnserver.conf" /etc/turnserver.conf
 sudo install -m 0644 "$release/deploy/qingpao.bootstrap.nginx" /etc/nginx/sites-available/qingpao
 sudo ln -sfn /etc/nginx/sites-available/qingpao /etc/nginx/sites-enabled/qingpao
 sudo chown -R ubuntu:ubuntu /opt/qingpao/app /opt/qingpao/data
 sudo systemctl daemon-reload
 sudo systemctl enable --now qingpao
+sudo systemctl enable --now coturn
+sudo systemctl restart coturn
 sudo nginx -t
 sudo systemctl reload nginx
 if [ ! -f /etc/letsencrypt/live/lsstools01.site/fullchain.pem ]; then
