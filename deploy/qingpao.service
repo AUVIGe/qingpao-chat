@@ -1,0 +1,19 @@
+[Unit]
+Description=Qingpao private chat
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/qingpao/app
+Environment=QINGPAO_DATA=/opt/qingpao/data
+Environment=PORT=8120
+ExecStart=/usr/bin/python3 /opt/qingpao/app/server/app.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
