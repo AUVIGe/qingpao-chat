@@ -10,11 +10,17 @@ sudo install -m 0644 "$release/server/app.py" /opt/qingpao/app/server/app.py
 sudo install -m 0644 "$release/server/requirements.txt" /opt/qingpao/app/server/requirements.txt
 sudo install -m 0644 "$release/public/index.html" /opt/qingpao/app/public/index.html
 sudo install -m 0644 "$release/deploy/qingpao.service" /etc/systemd/system/qingpao.service
-sudo install -m 0644 "$release/deploy/qingpao.nginx" /etc/nginx/sites-available/qingpao
+sudo install -m 0644 "$release/deploy/qingpao.bootstrap.nginx" /etc/nginx/sites-available/qingpao
 sudo ln -sfn /etc/nginx/sites-available/qingpao /etc/nginx/sites-enabled/qingpao
 sudo chown -R ubuntu:ubuntu /opt/qingpao/app /opt/qingpao/data
 sudo systemctl daemon-reload
 sudo systemctl enable --now qingpao
+sudo nginx -t
+sudo systemctl reload nginx
+if [ ! -f /etc/letsencrypt/live/1.lsstools.site/fullchain.pem ]; then
+    sudo certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d 1.lsstools.site
+fi
+sudo install -m 0644 "$release/deploy/qingpao.nginx" /etc/nginx/sites-available/qingpao
 sudo nginx -t
 sudo systemctl reload nginx
 curl -fsS http://127.0.0.1:8120/api/me >/dev/null

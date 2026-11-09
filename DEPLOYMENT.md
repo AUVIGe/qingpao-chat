@@ -9,8 +9,7 @@
 ## 首次安装（服务器）
 
 1. 将 GitHub 仓库的发布包上传到 `/tmp/qingpao-release` 并解压。
-2. 先取得证书：`sudo certbot --nginx -d 1.lsstools.site`。证书创建前，可暂时以 HTTP Nginx 配置完成验证。
-3. 执行：`cd /tmp/qingpao-release && bash deploy/install-cloud.sh`。
+2. 执行：`cd /tmp/qingpao-release && bash deploy/install-cloud.sh`。脚本先加载 HTTP 引导站点，再自动申请 Let’s Encrypt 证书并切换 HTTPS。
 4. 验证：`curl https://1.lsstools.site/api/me`。
 
 数据库与附件都保存在 `/opt/qingpao/data`，发布脚本不会覆盖它们。应用以 `qingpao.service` 运行；排障命令：`sudo systemctl status qingpao nginx`。
