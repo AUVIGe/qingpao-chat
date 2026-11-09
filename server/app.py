@@ -29,6 +29,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS pair_codes (code TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS friendships (user_a INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, user_b INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY(user_a,user_b));
     CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, body TEXT NOT NULL DEFAULT '', attachment TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS call_signals (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
     """)
     db.commit(); db.close()
 
@@ -78,6 +79,7 @@ class App(BaseHTTPRequestHandler):
             u = self.user(); return self.json({"user": {"id":u["id"], "username":u["username"]} if u else None})
         if path == "/api/contacts": return self.contacts()
         if path == "/api/messages": return self.messages(parse_qs(urlparse(self.path).query))
+        if path == "/api/call-signals": return self.call_signals(parse_qs(urlparse(self.path).query))
         if path.startswith("/uploads/"):
             file = UPLOADS / Path(path).name
             if not file.is_file(): return self.send_error(404)
@@ -92,6 +94,7 @@ class App(BaseHTTPRequestHandler):
             if path == "/api/pair-code": return self.create_code()
             if path == "/api/pair": return self.pair()
             if path == "/api/messages": return self.send_message()
+            if path == "/api/call-signals": return self.send_signal()
             return self.error_json("不存在的接口", 404)
         except (ValueError, KeyError, json.JSONDecodeError) as e: self.error_json(str(e) or "请求格式不正确")
     def register(self):
@@ -142,6 +145,20 @@ class App(BaseHTTPRequestHandler):
         db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
         if not ok:db.close();return self.error_json("不是好友",403)
         cur=db.execute("INSERT INTO messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)",(u["id"],other,body,int(time.time()))); db.commit(); db.close(); self.json({"id":cur.lastrowid})
+    def call_signals(self, q):
+        u=self.require()
+        if not u:return
+        other=int(q.get("with",[0])[0]); after=int(q.get("after",[0])[0]); db=conn()
+        rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND sender_id=? AND recipient_id=? ORDER BY id LIMIT 200",(after,other,u["id"])).fetchall(); db.close()
+        self.json({"signals":[dict(r) for r in rows]})
+    def send_signal(self):
+        u=self.require()
+        if not u:return
+        p=self.body(); other=int(p.get("to",0)); kind=p.get("kind",""); payload=p.get("payload")
+        if kind not in ("offer","answer","ice","hangup") or payload is None:return self.error_json("无效的通话信令")
+        db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
+        if not ok:db.close();return self.error_json("不是好友",403)
+        db.execute("INSERT INTO call_signals(sender_id,recipient_id,kind,payload,created_at) VALUES(?,?,?,?,?)",(u["id"],other,kind,json.dumps(payload),int(time.time()))); db.commit(); db.close(); self.json({"ok":True})
 
 if __name__ == "__main__":
     init_db(); port=int(os.environ.get("PORT","8120")); print(f"Qingpao listening on {port}"); ThreadingHTTPServer(("127.0.0.1",port),App).serve_forever()
