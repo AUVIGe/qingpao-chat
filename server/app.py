@@ -153,10 +153,11 @@ class App(BaseHTTPRequestHandler):
     def turn(self):
         if not self.require(): return
         password = os.environ.get("QINGPAO_TURN_PASSWORD", "")
+        host = os.environ.get("QINGPAO_TURN_HOST", "43.135.22.183")
         if not password: return self.json({"iceServers": []})
         self.json({"iceServers":[
-            {"urls":"turn:43.135.22.183:3478?transport=udp", "username":"qingpao", "credential":password},
-            {"urls":"turn:43.135.22.183:3478?transport=tcp", "username":"qingpao", "credential":password}
+            {"urls":f"turn:{host}:3478?transport=udp", "username":"qingpao", "credential":password},
+            {"urls":f"turn:{host}:3478?transport=tcp", "username":"qingpao", "credential":password}
         ]})
     def messages(self, q):
         u=self.require()
