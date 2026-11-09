@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Small-team private chat server; standard library only."""
-import hashlib, json, mimetypes, os, secrets, sqlite3, time
+import base64, binascii, hashlib, json, mimetypes, os, secrets, sqlite3, time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +30,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS friendships (user_a INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, user_b INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY(user_a,user_b));
     CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, body TEXT NOT NULL DEFAULT '', attachment TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS call_signals (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id), recipient_id INTEGER NOT NULL REFERENCES users(id), filename TEXT NOT NULL, content_type TEXT NOT NULL, created_at INTEGER NOT NULL);
     """)
     try: db.execute("ALTER TABLE messages ADD COLUMN burn_on_read INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError: pass
@@ -60,6 +61,14 @@ class App(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length > 2 * 1024 * 1024: raise ValueError("内容过大")
         return json.loads(self.rfile.read(length) or b"{}")
+    def attachment(self, attachment_id):
+        user=self.require()
+        if not user:return
+        db=conn(); row=db.execute("SELECT * FROM attachments WHERE id=? AND (sender_id=? OR recipient_id=?)",(attachment_id,user['id'],user['id'])).fetchone(); db.close()
+        if not row:return self.error_json('文件不存在',404)
+        file=UPLOADS / attachment_id
+        if not file.is_file():return self.error_json('文件不存在',404)
+        data=file.read_bytes(); self.send_response(200); self.send_header('Content-Type','application/octet-stream'); self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Content-Disposition',"attachment; filename*=UTF-8''" + __import__('urllib.parse',fromlist=['quote']).quote(row['filename'])); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(data)
     def user(self):
         token = SimpleCookie(self.headers.get("Cookie", "")).get("qp_session")
         if not token: return None
@@ -82,10 +91,7 @@ class App(BaseHTTPRequestHandler):
         if path == "/api/contacts": return self.contacts()
         if path == "/api/messages": return self.messages(parse_qs(urlparse(self.path).query))
         if path == "/api/call-signals": return self.call_signals(parse_qs(urlparse(self.path).query))
-        if path.startswith("/uploads/"):
-            file = UPLOADS / Path(path).name
-            if not file.is_file(): return self.send_error(404)
-            data=file.read_bytes(); self.send_response(200); self.send_header("Content-Type",mimetypes.guess_type(str(file))[0] or "application/octet-stream"); self.send_header("Content-Length",str(len(data))); self.end_headers(); return self.wfile.write(data)
+        if path.startswith('/api/attachments/'): return self.attachment(path.rsplit('/',1)[-1])
         self.static(path)
     def do_POST(self):
         path = urlparse(self.path).path
@@ -98,6 +104,7 @@ class App(BaseHTTPRequestHandler):
             if path == "/api/messages": return self.send_message()
             if path == "/api/messages/read": return self.read_burn_message()
             if path == "/api/call-signals": return self.send_signal()
+            if path == "/api/attachments": return self.upload_attachment()
             return self.error_json("不存在的接口", 404)
         except (ValueError, KeyError, json.JSONDecodeError) as e: self.error_json(str(e) or "请求格式不正确")
     def register(self):
@@ -139,7 +146,7 @@ class App(BaseHTTPRequestHandler):
         if not u:return
         other=int(q.get("with",[0])[0]); after=int(q.get("after",[0])[0]); db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
         if not ok: db.close(); return self.error_json("不是好友",403)
-        rows=db.execute("SELECT id,sender_id,body,attachment,created_at,burn_on_read FROM messages WHERE id>? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)) ORDER BY id LIMIT 200",(after,u["id"],other,other,u["id"])).fetchall(); db.close(); self.json({"messages":[dict(r) for r in rows]})
+        rows=db.execute("SELECT id,sender_id,CASE WHEN burn_on_read=1 AND recipient_id=? THEN '' ELSE body END AS body,attachment,created_at,burn_on_read FROM messages WHERE id>? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)) ORDER BY id LIMIT 200",(u["id"],after,u["id"],other,other,u["id"])).fetchall(); db.close(); self.json({"messages":[dict(r) for r in rows]})
     def send_message(self):
         u=self.require()
         if not u:return
@@ -151,12 +158,20 @@ class App(BaseHTTPRequestHandler):
     def read_burn_message(self):
         u=self.require()
         if not u:return
-        msg_id=int(self.body().get("id",0)); db=conn(); db.execute("DELETE FROM messages WHERE id=? AND burn_on_read=1 AND (sender_id=? OR recipient_id=?)",(msg_id,u["id"],u["id"])); db.commit(); db.close(); self.json({"ok":True})
+        msg_id=int(self.body().get("id",0)); db=conn(); db.execute("BEGIN IMMEDIATE"); row=db.execute("SELECT body FROM messages WHERE id=? AND burn_on_read=1 AND recipient_id=?",(msg_id,u["id"])).fetchone()
+        if not row: db.rollback(); db.close(); return self.error_json("消息已被查看或不存在",404)
+        db.execute("DELETE FROM messages WHERE id=?",(msg_id,)); db.commit(); db.close(); self.json({"body":row["body"]})
     def call_signals(self, q):
         u=self.require()
         if not u:return
         other=int(q.get("with",[0])[0]); after=int(q.get("after",[0])[0]); db=conn()
-        rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND sender_id=? AND recipient_id=? ORDER BY id LIMIT 200",(after,other,u["id"])).fetchall(); db.close()
+        # Incoming invitations must be visible even when the recipient has not selected
+        # that contact yet.  A selected contact narrows the normal polling path.
+        if other:
+            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND sender_id=? AND recipient_id=? ORDER BY id LIMIT 200",(after,other,u["id"])).fetchall()
+        else:
+            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND recipient_id=? ORDER BY id LIMIT 200",(after,u["id"])).fetchall()
+        db.execute("DELETE FROM call_signals WHERE created_at<?", (int(time.time())-86400,)); db.commit(); db.close()
         self.json({"signals":[dict(r) for r in rows]})
     def send_signal(self):
         u=self.require()
@@ -166,6 +181,24 @@ class App(BaseHTTPRequestHandler):
         db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
         if not ok:db.close();return self.error_json("不是好友",403)
         db.execute("INSERT INTO call_signals(sender_id,recipient_id,kind,payload,created_at) VALUES(?,?,?,?,?)",(u["id"],other,kind,json.dumps(payload),int(time.time()))); db.commit(); db.close(); self.json({"ok":True})
+    def upload_attachment(self):
+        u=self.require()
+        if not u:return
+        length=int(self.headers.get('Content-Length','0')); other=int(self.headers.get('X-Recipient-Id','0'))
+        if length<=0 or length>20*1024*1024:return self.error_json('文件大小应在 20 MB 以内',413)
+        from urllib.parse import unquote
+        filename=Path(unquote(self.headers.get('X-File-Name','file')).replace('\\','/')).name[:180] or 'file'
+        db=conn(); ok=db.execute('SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)',(u['id'],other,other,u['id'])).fetchone()
+        if not ok:db.close();return self.error_json('不是好友',403)
+        identifier=secrets.token_urlsafe(24); path=UPLOADS / identifier
+        with path.open('xb') as f:
+            remaining=length
+            while remaining:
+                chunk=self.rfile.read(min(65536,remaining))
+                if not chunk:break
+                f.write(chunk); remaining-=len(chunk)
+        if remaining: path.unlink(); db.close(); return self.error_json('上传未完成')
+        now=int(time.time()); db.execute('INSERT INTO attachments VALUES(?,?,?,?,?,?)',(identifier,u['id'],other,filename,'application/octet-stream',now)); cur=db.execute('INSERT INTO messages(sender_id,recipient_id,body,attachment,created_at) VALUES(?,?,?,?,?)',(u['id'],other,filename,identifier,now)); db.commit(); db.close(); self.json({'id':cur.lastrowid})
 
 if __name__ == "__main__":
     init_db(); port=int(os.environ.get("PORT","8120")); print(f"Qingpao listening on {port}"); ThreadingHTTPServer(("127.0.0.1",port),App).serve_forever()

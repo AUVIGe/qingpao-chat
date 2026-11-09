@@ -17,8 +17,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now qingpao
 sudo nginx -t
 sudo systemctl reload nginx
-if [ ! -f /etc/letsencrypt/live/1.lsstools.site/fullchain.pem ]; then
-    sudo certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d 1.lsstools.site
+if [ ! -f /etc/letsencrypt/live/lsstools01.site/fullchain.pem ]; then
+    sudo certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d www.lsstools01.site
 fi
 sudo install -m 0644 "$release/deploy/qingpao.nginx" /etc/nginx/sites-available/qingpao
 sudo nginx -t

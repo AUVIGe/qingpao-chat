@@ -1,0 +1,20 @@
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert');
+const html = fs.readFileSync('public/index.html', 'utf8');
+const script = html.split('<script>')[1].split('</script>')[0];
+const elements = {};
+for (const id of ['password','togglePassword','authSubmit','switch','authTitle','error','username']) elements[id] = {value:'',textContent:'',type:'text'};
+elements.password.type = 'password';
+let request, reloaded = false;
+function XHR(){ request=this; }
+XHR.prototype.open=function(method,url){this.url=url};
+XHR.prototype.setRequestHeader=function(){};
+XHR.prototype.send=function(body){this.body=JSON.parse(body);this.status=200;this.readyState=4;this.responseText='{}';this.onreadystatechange()};
+vm.runInNewContext(script,{document:{getElementById:id=>elements[id]},XMLHttpRequest:XHR,window:{location:{reload(){reloaded=true}}},JSON});
+elements.togglePassword.onclick(); assert.equal(elements.password.type,'text');
+elements.togglePassword.onclick(); assert.equal(elements.password.type,'password');
+elements.username.value='tester'; elements.password.value='secret123'; elements.authSubmit.onclick();
+assert.equal(request.url,'/api/login'); assert.equal(request.body.username,'tester'); assert(reloaded);
+elements.switch.onclick(); elements.authSubmit.onclick(); assert.equal(request.url,'/api/register');
+console.log('login, register, and password toggle handlers passed');
