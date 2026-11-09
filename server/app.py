@@ -74,7 +74,7 @@ class App(BaseHTTPRequestHandler):
         file = PUBLIC / ("index.html" if path == "/" else path.lstrip("/"))
         if not file.is_file() or ".." in file.parts: self.send_error(404); return
         data = file.read_bytes(); typ = mimetypes.guess_type(str(file))[0] or "application/octet-stream"
-        self.send_response(200); self.send_header("Content-Type", typ); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data)
+        self.send_response(200); self.send_header("Content-Type", typ); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"); self.send_header("Pragma", "no-cache"); self.send_header("Expires", "0"); self.end_headers(); self.wfile.write(data)
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/me":
