@@ -31,6 +31,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, body TEXT NOT NULL DEFAULT '', attachment TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS call_signals (id INTEGER PRIMARY KEY, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
     """)
+    try: db.execute("ALTER TABLE messages ADD COLUMN burn_on_read INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError: pass
     db.commit(); db.close()
 
 def password_hash(value, salt=None):
@@ -94,6 +96,7 @@ class App(BaseHTTPRequestHandler):
             if path == "/api/pair-code": return self.create_code()
             if path == "/api/pair": return self.pair()
             if path == "/api/messages": return self.send_message()
+            if path == "/api/messages/read": return self.read_burn_message()
             if path == "/api/call-signals": return self.send_signal()
             return self.error_json("不存在的接口", 404)
         except (ValueError, KeyError, json.JSONDecodeError) as e: self.error_json(str(e) or "请求格式不正确")
@@ -136,7 +139,7 @@ class App(BaseHTTPRequestHandler):
         if not u:return
         other=int(q.get("with",[0])[0]); after=int(q.get("after",[0])[0]); db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
         if not ok: db.close(); return self.error_json("不是好友",403)
-        rows=db.execute("SELECT id,sender_id,body,attachment,created_at FROM messages WHERE id>? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)) ORDER BY id LIMIT 200",(after,u["id"],other,other,u["id"])).fetchall(); db.close(); self.json({"messages":[dict(r) for r in rows]})
+        rows=db.execute("SELECT id,sender_id,body,attachment,created_at,burn_on_read FROM messages WHERE id>? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)) ORDER BY id LIMIT 200",(after,u["id"],other,other,u["id"])).fetchall(); db.close(); self.json({"messages":[dict(r) for r in rows]})
     def send_message(self):
         u=self.require()
         if not u:return
@@ -144,7 +147,11 @@ class App(BaseHTTPRequestHandler):
         if not body or len(body)>4000:return self.error_json("消息长度应为 1–4000 字")
         db=conn(); ok=db.execute("SELECT 1 FROM friendships WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",(u["id"],other,other,u["id"])).fetchone()
         if not ok:db.close();return self.error_json("不是好友",403)
-        cur=db.execute("INSERT INTO messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)",(u["id"],other,body,int(time.time()))); db.commit(); db.close(); self.json({"id":cur.lastrowid})
+        cur=db.execute("INSERT INTO messages(sender_id,recipient_id,body,burn_on_read,created_at) VALUES(?,?,?,?,?)",(u["id"],other,body,1 if p.get("burn") else 0,int(time.time()))); db.commit(); db.close(); self.json({"id":cur.lastrowid})
+    def read_burn_message(self):
+        u=self.require()
+        if not u:return
+        msg_id=int(self.body().get("id",0)); db=conn(); db.execute("DELETE FROM messages WHERE id=? AND burn_on_read=1 AND (sender_id=? OR recipient_id=?)",(msg_id,u["id"],u["id"])); db.commit(); db.close(); self.json({"ok":True})
     def call_signals(self, q):
         u=self.require()
         if not u:return
