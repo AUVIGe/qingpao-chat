@@ -1,2 +1,6 @@
 dist/
 site.tar.gz
+.test-cookies.txt
+.test-data/
+__pycache__/
+*.pyc
