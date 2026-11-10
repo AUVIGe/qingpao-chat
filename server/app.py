@@ -12,7 +12,7 @@ PUBLIC = ROOT / "public"
 DATA = Path(os.environ.get("QINGPAO_DATA", "/opt/qingpao/data"))
 DB = DATA / "qingpao.db"
 UPLOADS = DATA / "uploads"
-SESSION_AGE = 60 * 60 * 24 * 30
+SESSION_AGE = 60 * 60 * 24 * 365
 ONLINE_SECONDS = 75
 
 def conn():
@@ -153,7 +153,7 @@ class App(BaseHTTPRequestHandler):
     def turn(self):
         if not self.require(): return
         password = os.environ.get("QINGPAO_TURN_PASSWORD", "")
-        host = os.environ.get("QINGPAO_TURN_HOST", "43.135.22.183")
+        host = os.environ.get("QINGPAO_TURN_HOST", "81.71.45.160")
         if not password: return self.json({"iceServers": []})
         self.json({"iceServers":[
             {"urls":f"turn:{host}:3478?transport=udp", "username":"qingpao", "credential":password},
@@ -186,9 +186,9 @@ class App(BaseHTTPRequestHandler):
         # Incoming invitations must be visible even when the recipient has not selected
         # that contact yet.  A selected contact narrows the normal polling path.
         if other:
-            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND sender_id=? AND recipient_id=? ORDER BY id LIMIT 200",(after,other,u["id"])).fetchall()
+            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND sender_id=? AND recipient_id=? AND created_at>? ORDER BY id LIMIT 200",(after,other,u["id"],int(time.time())-120)).fetchall()
         else:
-            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND recipient_id=? ORDER BY id LIMIT 200",(after,u["id"])).fetchall()
+            rows=db.execute("SELECT id,sender_id,kind,payload FROM call_signals WHERE id>? AND recipient_id=? AND created_at>? ORDER BY id LIMIT 200",(after,u["id"],int(time.time())-120)).fetchall()
         db.execute("DELETE FROM call_signals WHERE created_at<?", (int(time.time())-86400,)); db.commit(); db.close()
         self.json({"signals":[dict(r) for r in rows]})
     def send_signal(self):
